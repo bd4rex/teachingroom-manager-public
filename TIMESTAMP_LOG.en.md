@@ -15,6 +15,13 @@ This file records only public-repository release and handoff events. It excludes
 
 ## Entries
 
+### 2026-07-27 10:32:10 CST
+
+- Event: Fixed list and dialog display issues introduced by the history action in the sanitized public edition.
+- Branch: `codex/fix-history-display`
+- Notes: Synced only the responsive display fix and bilingual documentation, with no school deployment details or runtime data.
+- Verification: Horizontal desktop table overflow at 1280px dropped from 40px to 0; the 390px mobile page has no horizontal overflow and the title does not overlap the close button; all 3 Node tests passed.
+
 ### 2026-07-27 09:57:11 CST
 
 - Event: Added classroom configuration history to the sanitized public edition and completed a full-project review.
