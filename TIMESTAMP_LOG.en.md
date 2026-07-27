@@ -15,6 +15,13 @@ This file records only public-repository release and handoff events. It excludes
 
 ## Entries
 
+### 2026-07-27 13:07:21 CST
+
+- Event: Renamed the initial history entry in the sanitized public edition.
+- Branch: `codex/rename-history-baseline`
+- Notes: Changed the Chinese label from "History Feature Enablement Snapshot" to "Classroom Configuration When History Tracking Was Enabled", with no school deployment details or runtime data.
+- Verification: All 3 Node tests passed, and the Chinese plus English changelogs were updated together.
+
 ### 2026-07-27 11:33:10 CST
 
 - Event: Standardized spacing across Teacher Audio, Recording, and Monitoring in the sanitized public edition.

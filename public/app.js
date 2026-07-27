@@ -477,7 +477,7 @@ function historyEventLabel(eventType) {
     timeline_change_rolled_back: "撤销时间线操作",
     timeline_state_restored: "还原到历史记录之前",
     classroom_removed_by_rollback: "回滚删除教室",
-    history_baseline: "历史功能启用快照"
+    history_baseline: "启用历史记录时的教室配置"
   }[eventType] || eventType;
 }
 
