@@ -311,7 +311,7 @@ function renderRecords() {
       <td>${renderPlan(v)}</td>
       <td>${renderNoteLink(record)}</td>
       <td>${record.pendingChanges ? badge(`${record.pendingChanges} 待审`, "warn") : badge("无")}</td>
-      <td><div class="actions recordActions"><button type="button" data-action="history">历史</button><button type="button" data-action="edit">变更</button></div></td>
+      <td><div class="actions recordActions"><button type="button" data-action="edit">变更</button><button type="button" data-action="history">历史</button></div></td>
     `;
     tr.querySelector('[data-action="view-note"]')?.addEventListener("click", () => openNoteViewer(record));
     tr.querySelector('[data-action="history"]').addEventListener("click", () => openClassroomHistory(record));
@@ -339,8 +339,8 @@ function renderCards() {
           ${record.pendingChanges ? badge("待审核", "warn") : ""}
           ${badge(v.department || "")}
           <div class="cardRecordActions">
-            <button class="cardHistoryButton" type="button">历史</button>
             <button class="cardEditButton" type="button">变更</button>
+            <button class="cardHistoryButton" type="button">历史</button>
           </div>
         </div>
       </header>

@@ -15,6 +15,13 @@ This file records only public-repository release and handoff events. It excludes
 
 ## Entries
 
+### 2026-07-27 10:56:45 CST
+
+- Event: Reordered classroom action buttons in the sanitized public edition.
+- Branch: `codex/reorder-classroom-actions`
+- Notes: Desktop rows and mobile cards now place `Edit` before `History`, with no school deployment details or runtime data.
+- Verification: All 3 Node tests passed, and desktop plus mobile DOM order was checked for consistency.
+
 ### 2026-07-27 10:32:10 CST
 
 - Event: Fixed list and dialog display issues introduced by the history action in the sanitized public edition.
