@@ -42,13 +42,13 @@ Environment=PORT=3000
 Environment=DATA_DIR=<APP_DIR>/data
 Environment=DB_PATH=<APP_DIR>/data/teachingroom.sqlite
 Environment=SESSION_SECRET=<CHANGE_ME_LONG_RANDOM_SECRET>
+Environment=INITIAL_ADMIN_PASSWORD=<OPTIONAL_FIRST_RUN_PASSWORD_AT_LEAST_12_CHARACTERS>
 Environment=AUTO_BACKUP_KEEP=200
 ```
 
 可选参数：
 
 ```text
-INITIAL_ADMIN_PASSWORD=<可选首次管理员密码，至少 12 个字符>
 BASE_DATA_API_TOKEN=<固定开放 API 令牌>
 BASE_DATA_CORS_ORIGIN=<允许的跨域来源，以逗号分隔；默认关闭>
 BACKUP_MIRROR_DIR=<可选第二磁盘或网络挂载目录>
@@ -206,6 +206,7 @@ curl -H "X-API-Token: <TOKEN>" http://<SERVER_IP>:3000/api/open/classrooms
 - `npm test` 通过。
 - `/api/health` 返回 `{ "ok": true }`。
 - 管理员账号可以正常登录。
+- 每间教室的历史弹窗可显示字段旧值/新值、人员和北京时间。
 - 手机窄屏布局可用。
 - Excel 导出正常。
 - 数据库备份列表中至少有一条自动备份。

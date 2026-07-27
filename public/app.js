@@ -10,6 +10,11 @@ const state = {
   auditPage: 1,
   auditTotal: 0,
   auditHasMore: false,
+  historyEntries: [],
+  historyPage: 1,
+  historyTotal: 0,
+  historyHasMore: false,
+  historyRecord: null,
   backups: [],
   serverReachable: null,
   outboxCount: 0,
@@ -77,12 +82,19 @@ const el = {
   noteTitle: document.querySelector("#noteTitle"),
   noteBody: document.querySelector("#noteBody"),
   notePhotoList: document.querySelector("#notePhotoList"),
+  historyDialog: document.querySelector("#historyDialog"),
+  historyTitle: document.querySelector("#historyTitle"),
+  historySubtitle: document.querySelector("#historySubtitle"),
+  historyList: document.querySelector("#historyList"),
+  historyCountLabel: document.querySelector("#historyCountLabel"),
+  historyMoreButton: document.querySelector("#historyMoreButton"),
   reasonInput: document.querySelector("#reasonInput"),
   submitChangeButton: document.querySelector("#submitChangeButton"),
   createClassroomDialog: document.querySelector("#createClassroomDialog"),
   createClassroomFields: document.querySelector("#createClassroomFields"),
   submitCreateClassroomButton: document.querySelector("#submitCreateClassroomButton"),
   passwordDialog: document.querySelector("#passwordDialog"),
+  selfUsernameInput: document.querySelector("#selfUsernameInput"),
   currentPasswordInput: document.querySelector("#currentPasswordInput"),
   selfNewPasswordInput: document.querySelector("#selfNewPasswordInput"),
   confirmNewPasswordInput: document.querySelector("#confirmNewPasswordInput"),
@@ -154,6 +166,7 @@ function bindEvents() {
   el.refreshUsersButton.addEventListener("click", loadUsers);
   el.refreshAuditButton.addEventListener("click", loadAuditLogs);
   el.auditMoreButton.addEventListener("click", () => loadAuditLogs({ append: true }));
+  el.historyMoreButton.addEventListener("click", () => loadClassroomHistory({ append: true }));
   el.createBackupButton.addEventListener("click", createBackup);
   el.uploadBackupButton.addEventListener("click", () => el.backupUploadInput.click());
   el.backupUploadInput.addEventListener("change", uploadAndRestoreBackup);
@@ -298,9 +311,10 @@ function renderRecords() {
       <td>${renderPlan(v)}</td>
       <td>${renderNoteLink(record)}</td>
       <td>${record.pendingChanges ? badge(`${record.pendingChanges} 待审`, "warn") : badge("无")}</td>
-      <td><div class="actions"><button type="button" data-action="edit">变更</button></div></td>
+      <td><div class="actions recordActions"><button type="button" data-action="history">历史</button><button type="button" data-action="edit">变更</button></div></td>
     `;
     tr.querySelector('[data-action="view-note"]')?.addEventListener("click", () => openNoteViewer(record));
+    tr.querySelector('[data-action="history"]').addEventListener("click", () => openClassroomHistory(record));
     tr.querySelector('[data-action="edit"]').addEventListener("click", () => openEditor(record));
     return tr;
   });
@@ -324,7 +338,10 @@ function renderCards() {
         <div class="cardBadges">
           ${record.pendingChanges ? badge("待审核", "warn") : ""}
           ${badge(v.department || "")}
-          <button class="cardEditButton" type="button">变更</button>
+          <div class="cardRecordActions">
+            <button class="cardHistoryButton" type="button">历史</button>
+            <button class="cardEditButton" type="button">变更</button>
+          </div>
         </div>
       </header>
       <div class="cardFacts">
@@ -339,6 +356,7 @@ function renderCards() {
         ${hasNoteContent(record) ? `<div class="fact"><span>备注</span><button class="noteLink" type="button" data-action="view-note">查看</button></div>` : ""}
       </div>
     `;
+    card.querySelector(".cardHistoryButton").addEventListener("click", () => openClassroomHistory(record));
     card.querySelector(".cardEditButton").addEventListener("click", () => openEditor(record));
     card.querySelector('[data-action="view-note"]')?.addEventListener("click", () => openNoteViewer(record));
     return card;
@@ -367,6 +385,114 @@ async function openNoteViewer(record) {
   } catch {
     el.notePhotoList.innerHTML = `<div class="photoEmpty">照片列表加载失败，请恢复网络后重试</div>`;
   }
+}
+
+async function openClassroomHistory(record) {
+  state.historyRecord = record;
+  state.historyEntries = [];
+  state.historyPage = 1;
+  state.historyTotal = 0;
+  state.historyHasMore = false;
+  el.historyTitle.textContent = `${record.values.building || ""} ${doorTitle(record.values)} 配置历史`;
+  el.historySubtitle.textContent = "按北京时间显示正式生效的字段、照片、新增和回滚记录";
+  el.historyList.innerHTML = `<div class="historyEmpty">历史记录加载中</div>`;
+  el.historyCountLabel.textContent = "正在加载";
+  el.historyMoreButton.hidden = true;
+  el.historyDialog.showModal();
+  await loadClassroomHistory();
+}
+
+async function loadClassroomHistory({ append = false } = {}) {
+  if (!state.historyRecord) return;
+  const nextPage = append ? state.historyPage + 1 : 1;
+  el.historyMoreButton.disabled = true;
+  try {
+    const data = await getJson(`/api/classrooms/${state.historyRecord.id}/history?page=${nextPage}&pageSize=30`);
+    state.historyEntries = append ? [...state.historyEntries, ...(data.entries || [])] : (data.entries || []);
+    state.historyPage = data.page || nextPage;
+    state.historyTotal = data.total || 0;
+    state.historyHasMore = Boolean(data.hasMore);
+    renderClassroomHistory();
+  } catch (error) {
+    if (!append) el.historyList.innerHTML = `<div class="historyEmpty">历史记录加载失败，请恢复网络后重试</div>`;
+    el.historyCountLabel.textContent = "加载失败";
+  } finally {
+    el.historyMoreButton.disabled = false;
+  }
+}
+
+function renderClassroomHistory() {
+  if (!state.historyEntries.length) {
+    el.historyList.innerHTML = `<div class="historyEmpty">暂无配置历史</div>`;
+  } else {
+    el.historyList.replaceChildren(...state.historyEntries.map((entry) => {
+      const item = document.createElement("article");
+      item.className = "historyItem";
+      const actorText = entry.actorName || entry.actorUsername || "系统";
+      const peopleText = entry.reviewerName || entry.reviewerUsername
+        ? `${actorText} 提交 · ${entry.reviewerName || entry.reviewerUsername} 审核`
+        : `${actorText} 操作`;
+      const changes = (entry.changes || []).map((change) => `
+        <div class="historyChange">
+          <strong>${escapeHtml(change.label || change.fieldKey)}</strong>
+          <span class="historyOld">${historyValue(change.oldValue)}</span>
+          <span class="historyArrow" aria-hidden="true">→</span>
+          <span class="historyNew">${historyValue(change.newValue)}</span>
+        </div>
+      `).join("");
+      const isBaseline = entry.eventType === "history_baseline";
+      item.innerHTML = `
+        <header>
+          <div>
+            <strong>${escapeHtml(historyEventLabel(entry.eventType))}</strong>
+            <span>${escapeHtml(formatBeijingTime(entry.occurredAt))}</span>
+          </div>
+          <span class="historySource">${escapeHtml(historySourceLabel(entry.sourceType))}</span>
+        </header>
+        <p class="historyPeople">${escapeHtml(peopleText)}</p>
+        ${entry.reason ? `<p class="historyReason"><strong>变更说明：</strong>${escapeHtml(entry.reason)}</p>` : ""}
+        ${entry.reviewNote ? `<p class="historyReason"><strong>审核意见：</strong>${escapeHtml(entry.reviewNote)}</p>` : ""}
+        ${changes ? `
+          <details class="historyDetails" ${isBaseline ? "" : "open"}>
+            <summary>${entry.changes.length} 项内容</summary>
+            <div class="historyChanges">${changes}</div>
+          </details>
+        ` : `<p class="historyReason">${escapeHtml(entry.detail?.note || "该条旧记录没有可恢复的字段明细")}</p>`}
+      `;
+      return item;
+    }));
+  }
+  el.historyCountLabel.textContent = `已显示 ${state.historyEntries.length} / ${state.historyTotal} 条`;
+  el.historyMoreButton.hidden = !state.historyHasMore;
+}
+
+function historyEventLabel(eventType) {
+  return {
+    classroom_created: "新增教室",
+    fields_changed: "配置变更",
+    photo_uploaded: "上传照片",
+    photo_deleted: "删除照片",
+    change_rolled_back: "撤销一次修改",
+    state_restored: "整体状态还原",
+    timeline_change_rolled_back: "撤销时间线操作",
+    timeline_state_restored: "还原到历史记录之前",
+    classroom_removed_by_rollback: "回滚删除教室",
+    history_baseline: "历史功能启用快照"
+  }[eventType] || eventType;
+}
+
+function historySourceLabel(sourceType) {
+  return {
+    web: "网页",
+    excel: "Excel",
+    rollback: "回滚",
+    system: "系统"
+  }[sourceType] || sourceType || "系统";
+}
+
+function historyValue(value) {
+  const text = String(value ?? "");
+  return escapeHtml(text || "（空）");
 }
 
 function renderReviews(requests) {
@@ -680,6 +806,7 @@ async function createClassroom() {
 }
 
 function openPasswordDialog() {
+  el.selfUsernameInput.value = state.user?.username || "";
   el.currentPasswordInput.value = "";
   el.selfNewPasswordInput.value = "";
   el.confirmNewPasswordInput.value = "";

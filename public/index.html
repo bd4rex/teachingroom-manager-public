@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>教室设备管理</title>
+    <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
@@ -178,6 +179,24 @@
       </form>
     </dialog>
 
+    <dialog id="historyDialog">
+      <form id="historyForm" class="historyForm" method="dialog">
+        <header>
+          <div>
+            <h2 id="historyTitle">教室配置历史</h2>
+            <p id="historySubtitle" class="muted">查看什么时候、由谁变更了哪些内容</p>
+          </div>
+          <button class="iconButton" value="cancel" type="submit" formnovalidate aria-label="关闭">×</button>
+        </header>
+        <div id="historyList" class="historyList" aria-live="polite"></div>
+        <footer class="historyFooter">
+          <span id="historyCountLabel">0 条记录</span>
+          <button id="historyMoreButton" type="button" hidden>加载更多</button>
+          <button value="cancel" type="submit" formnovalidate>关闭</button>
+        </footer>
+      </form>
+    </dialog>
+
     <dialog id="createClassroomDialog">
       <form id="createClassroomForm" method="dialog">
         <header>
@@ -197,6 +216,7 @@
 
     <dialog id="passwordDialog">
       <form id="passwordForm" class="passwordForm" method="dialog">
+        <input id="selfUsernameInput" name="username" type="text" autocomplete="username" hidden />
         <header>
           <div>
             <h2>修改密码</h2>

@@ -588,7 +588,8 @@ dialog {
 
 #userDialog,
 #auditDialog,
-#backupDialog {
+#backupDialog,
+#historyDialog {
   width: min(1180px, calc(100vw - 24px));
 }
 
@@ -1008,6 +1009,153 @@ dialog footer {
   font-size: 13px;
 }
 
+.recordActions {
+  flex-wrap: nowrap;
+}
+
+.historyForm {
+  display: grid;
+  gap: 14px;
+}
+
+.historyList {
+  display: grid;
+  gap: 10px;
+  max-height: min(650px, calc(100vh - 210px));
+  overflow: auto;
+  padding: 2px 4px 2px 18px;
+}
+
+.historyItem {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfe;
+  padding: 12px;
+}
+
+.historyItem::before {
+  position: absolute;
+  top: 19px;
+  left: -17px;
+  width: 9px;
+  height: 9px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+  content: "";
+}
+
+.historyItem:not(:last-child)::after {
+  position: absolute;
+  top: 31px;
+  bottom: -17px;
+  left: -13px;
+  width: 1px;
+  background: #b9c9da;
+  content: "";
+}
+
+.historyItem > header {
+  align-items: flex-start;
+}
+
+.historyItem > header strong,
+.historyItem > header span {
+  display: block;
+}
+
+.historyItem > header strong {
+  font-size: 15px;
+}
+
+.historyItem > header span,
+.historyPeople {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.historySource {
+  border: 1px solid #c8d8ea;
+  border-radius: 999px;
+  background: #fff;
+  color: var(--accent) !important;
+  padding: 3px 8px;
+  white-space: nowrap;
+}
+
+.historyPeople,
+.historyReason {
+  margin: 7px 0 0;
+}
+
+.historyReason {
+  color: #3d4b5c;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.historyDetails {
+  margin-top: 10px;
+}
+
+.historyDetails summary {
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.historyChanges {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.historyChange {
+  display: grid;
+  grid-template-columns: minmax(110px, 160px) minmax(0, 1fr) 18px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  border-top: 1px solid var(--line);
+  padding-top: 7px;
+  font-size: 13px;
+}
+
+.historyChange strong,
+.historyChange span {
+  overflow-wrap: anywhere;
+}
+
+.historyOld {
+  color: var(--muted);
+}
+
+.historyArrow {
+  color: var(--muted);
+  text-align: center;
+}
+
+.historyNew {
+  color: #174f33;
+  font-weight: 600;
+}
+
+.historyFooter {
+  margin-top: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.historyEmpty {
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  padding: 30px 12px;
+  text-align: center;
+}
+
 .backupForm {
   display: grid;
   gap: 14px;
@@ -1305,6 +1453,12 @@ dialog footer {
     max-width: 148px;
   }
 
+  .cardRecordActions {
+    display: flex;
+    gap: 4px;
+    width: 100%;
+  }
+
   .badge {
     min-width: 0;
     min-height: 22px;
@@ -1319,7 +1473,9 @@ dialog footer {
     line-height: 1.2;
   }
 
-  .cardEditButton {
+  .cardEditButton,
+  .cardHistoryButton {
+    flex: 1 1 0;
     min-height: 30px;
     padding: 0 10px;
     border-color: #a9c6e5;
@@ -1327,6 +1483,12 @@ dialog footer {
     color: var(--blue);
     font-size: 12px;
     font-weight: 700;
+  }
+
+  .cardHistoryButton {
+    border-color: var(--line);
+    background: #fff;
+    color: #3d4b5c;
   }
 
   .classroomCard .cardFacts {
@@ -1387,6 +1549,31 @@ dialog footer {
 
   .classroomCard .actions {
     display: grid;
+  }
+
+  .historyList {
+    max-height: calc(100vh - 190px);
+    padding-left: 14px;
+  }
+
+  .historyChange {
+    grid-template-columns: minmax(88px, 115px) minmax(0, 1fr);
+  }
+
+  .historyArrow {
+    display: none;
+  }
+
+  .historyNew::before {
+    display: block;
+    color: var(--muted);
+    content: "变更为";
+    font-size: 11px;
+    font-weight: 400;
+  }
+
+  .historyNew {
+    grid-column: 2;
   }
 
   .classroomCard .actions button {

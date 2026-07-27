@@ -6,7 +6,20 @@ import session from "express-session";
 import bcrypt from "bcryptjs";
 import multer from "multer";
 import Database from "better-sqlite3";
-import { db, dbPath, getFields, initDb, initialAdminPasswordPath, logAudit, normalizeClassroomValue, nowSql, setClassroomValue } from "./database.js";
+import {
+  db,
+  backfillClassroomHistory,
+  dbPath,
+  getClassroomHistory,
+  getFields,
+  initDb,
+  initialAdminPasswordPath,
+  logAudit,
+  normalizeClassroomValue,
+  nowSql,
+  recordClassroomHistory,
+  setClassroomValue
+} from "./database.js";
 import { buildExportWorkbook, importSourceExcelIfEmpty, parseUploadedWorkbook } from "./excel.js";
 import { applyTimelineRollback, buildTimelineRollbackPreview } from "./timeline-rollback.js";
 
@@ -18,7 +31,7 @@ const exportsDir = process.env.EXPORTS_DIR || path.join(process.cwd(), "exports"
 const uploadsDir = process.env.UPLOADS_DIR || path.join(process.cwd(), "uploads");
 const backupsDir = process.env.BACKUPS_DIR || path.join(process.cwd(), "backups");
 const backupMirrorDir = String(process.env.BACKUP_MIRROR_DIR || "").trim();
-const autoBackupKeep = Math.max(7, Number(process.env.AUTO_BACKUP_KEEP || 200));
+const autoBackupKeep = normalizeAutoBackupKeep(process.env.AUTO_BACKUP_KEEP);
 const runtimeDataDir = path.dirname(dbPath);
 const apiTokenPath = path.join(runtimeDataDir, "base-data-api-token.txt");
 const sessionSecretPath = path.join(runtimeDataDir, "session-secret.txt");
@@ -31,6 +44,7 @@ initDb();
 const importResult = process.env.SKIP_SOURCE_IMPORT === "1"
   ? { imported: false, count: db.prepare("SELECT COUNT(*) AS count FROM classrooms").get().count }
   : await importSourceExcelIfEmpty();
+backfillClassroomHistory();
 const baseDataToken = getOrCreateBaseDataToken();
 const sessionSecret = getOrCreateSessionSecret();
 const upload = multer({
@@ -75,15 +89,18 @@ app.get("/api/health", (req, res) => {
   res.json({ ok: true, imported: importResult });
 });
 
-app.post("/api/login", (req, res) => {
+app.post("/api/login", (req, res, next) => {
   const { username, password } = req.body || {};
   const user = db.prepare("SELECT * FROM users WHERE username = ? AND active = 1 AND deleted_at IS NULL").get(username || "");
   if (!user || !bcrypt.compareSync(password || "", user.password_hash)) {
     return res.status(401).json({ error: "用户名或密码不正确" });
   }
-  req.session.user = safeUser(user);
-  logAudit(user.id, "login", "user", user.id);
-  res.json({ user: req.session.user });
+  req.session.regenerate((error) => {
+    if (error) return next(error);
+    req.session.user = safeUser(user);
+    logAudit(user.id, "login", "user", user.id);
+    res.json({ user: req.session.user });
+  });
 });
 
 app.post("/api/logout", requireLogin, (req, res) => {
@@ -160,6 +177,20 @@ app.get("/api/classrooms", requireLogin, (req, res) => {
   res.json(result);
 });
 
+app.get("/api/classrooms/:id/history", requireLogin, (req, res) => {
+  const classroomId = Number(req.params.id);
+  if (!classroomId) return res.status(400).json({ error: "教室编号不正确" });
+  const classroom = db.prepare("SELECT id, building, room FROM classrooms WHERE id = ?").get(classroomId);
+  if (!classroom) return res.status(404).json({ error: "教室不存在" });
+  res.json({
+    classroom,
+    ...getClassroomHistory(classroomId, {
+      page: req.query.page,
+      pageSize: req.query.pageSize
+    })
+  });
+});
+
 app.post("/api/classrooms", requireAdmin, (req, res) => {
   const values = req.body?.values;
   if (!values || typeof values !== "object" || Array.isArray(values)) {
@@ -212,10 +243,19 @@ app.post("/api/classrooms", requireAdmin, (req, res) => {
 
     for (const [fieldKey, value] of Object.entries(savedValues)) setClassroomValue(classroom.id, fieldKey, value);
 
-    logAudit(req.session.user.id, "create_classroom", "classroom", classroom.id, {
+    const auditId = logAudit(req.session.user.id, "create_classroom", "classroom", classroom.id, {
       building,
       room,
       values: savedValues
+    });
+    recordClassroomHistory({
+      classroomId: classroom.id,
+      eventType: "classroom_created",
+      sourceType: "web",
+      sourceId: auditId,
+      actorId: req.session.user.id,
+      changes: classroomCreateHistoryChanges(building, room, savedValues),
+      dedupeKey: `audit_create:${auditId}`
     });
     return classroom.id;
   });
@@ -307,28 +347,39 @@ app.post("/api/classrooms/:id/photos", requireLogin, photoUpload.single("photo")
     return res.status(202).json({ id: request.id, ok: true, status: "pending" });
   }
 
-  const photo = db.prepare(`
-    INSERT INTO classroom_photos (classroom_id, uploader_id, original_name, mime_type, size, photo_data, client_request_id, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ${nowSql})
-    RETURNING id
-  `).get(
-    classroomId,
-    req.session.user.id,
-    originalName,
-    req.file.mimetype,
-    req.file.size,
-    req.file.buffer,
-    clientRequestId || null
-  );
-
-  logAudit(req.session.user.id, "upload_classroom_photo", "classroom", classroomId, {
-    photoId: photo.id,
-    file: req.file.originalname,
-    size: req.file.size,
-    building: classroom.building,
-    room: classroom.room
+  const createPhotoTx = db.transaction(() => {
+    const photo = db.prepare(`
+      INSERT INTO classroom_photos (classroom_id, uploader_id, original_name, mime_type, size, photo_data, client_request_id, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ${nowSql})
+      RETURNING id
+    `).get(
+      classroomId,
+      req.session.user.id,
+      originalName,
+      req.file.mimetype,
+      req.file.size,
+      req.file.buffer,
+      clientRequestId || null
+    );
+    const auditId = logAudit(req.session.user.id, "upload_classroom_photo", "classroom", classroomId, {
+      photoId: photo.id,
+      file: req.file.originalname,
+      size: req.file.size,
+      building: classroom.building,
+      room: classroom.room
+    });
+    recordClassroomHistory({
+      classroomId,
+      eventType: "photo_uploaded",
+      sourceType: "web",
+      sourceId: auditId,
+      actorId: req.session.user.id,
+      changes: [photoHistoryChange("upload", originalName)],
+      dedupeKey: `audit_photo:${auditId}`
+    });
+    return photo.id;
   });
-  res.status(201).json({ id: photo.id, ok: true });
+  res.status(201).json({ id: createPhotoTx(), ok: true });
 });
 
 app.get("/api/classrooms/:id/photos/:photoId/file", requireLogin, (req, res) => {
@@ -390,8 +441,25 @@ app.delete("/api/classrooms/:id/photos/:photoId", requireLogin, (req, res) => {
     return res.status(202).json({ id: request.id, ok: true, status: "pending" });
   }
 
-  db.prepare(`UPDATE classroom_photos SET deleted_at = ${nowSql} WHERE id = ?`).run(photoId);
-  logAudit(req.session.user.id, "delete_classroom_photo", "classroom", classroomId, { photoId });
+  const deletePhotoTx = db.transaction(() => {
+    db.prepare(`UPDATE classroom_photos SET deleted_at = ${nowSql} WHERE id = ?`).run(photoId);
+    const auditId = logAudit(req.session.user.id, "delete_classroom_photo", "classroom", classroomId, {
+      photoId,
+      file: photo.originalName,
+      building: classroom.building,
+      room: classroom.room
+    });
+    recordClassroomHistory({
+      classroomId,
+      eventType: "photo_deleted",
+      sourceType: "web",
+      sourceId: auditId,
+      actorId: req.session.user.id,
+      changes: [photoHistoryChange("delete", photo.originalName)],
+      dedupeKey: `audit_photo:${auditId}`
+    });
+  });
+  deletePhotoTx();
   res.json({ ok: true });
 });
 
@@ -452,6 +520,19 @@ app.post("/api/classroom-photo-requests/:id/review", requireAdmin, (req, res) =>
       room: request.room,
       note: String(note || "").trim()
     });
+    if (decision === "approved") {
+      recordClassroomHistory({
+        classroomId: request.classroom_id,
+        eventType: request.action === "upload" ? "photo_uploaded" : "photo_deleted",
+        sourceType: "web",
+        sourceId: requestId,
+        actorId: request.submitter_id,
+        reviewerId: req.session.user.id,
+        changes: [photoHistoryChange(request.action, request.original_name)],
+        reviewNote: String(note || "").trim(),
+        dedupeKey: `photo_request:${requestId}`
+      });
+    }
   });
 
   reviewTx();
@@ -668,6 +749,20 @@ app.post("/api/classroom-create-requests/:id/review", requireAdmin, (req, res) =
       building: payload.building,
       room: payload.room
     });
+    if (decision === "approved") {
+      recordClassroomHistory({
+        classroomId,
+        eventType: "classroom_created",
+        sourceType: String(request.reason || "").startsWith("Excel上传：") ? "excel" : "web",
+        sourceId: requestId,
+        actorId: request.submitter_id,
+        reviewerId: req.session.user.id,
+        changes: classroomCreateHistoryChanges(payload.building, payload.room, payload.values),
+        reason: request.reason,
+        reviewNote: String(note || "").trim(),
+        dedupeKey: `create_request:${requestId}`
+      });
+    }
   });
 
   reviewTx();
@@ -722,6 +817,20 @@ app.post("/api/change-requests/:id/review", requireAdmin, (req, res) => {
     `).run(decision, req.session.user.id, String(note || "").trim(), requestId);
 
     logAudit(req.session.user.id, `review_${decision}`, "change_request", requestId, { note });
+    if (decision === "approved") {
+      recordClassroomHistory({
+        classroomId: request.classroom_id,
+        eventType: "fields_changed",
+        sourceType: String(request.reason || "").startsWith("Excel上传：") ? "excel" : "web",
+        sourceId: requestId,
+        actorId: request.submitter_id,
+        reviewerId: req.session.user.id,
+        changes: reviewItems,
+        reason: request.reason,
+        reviewNote: String(note || "").trim(),
+        dedupeKey: `change_request:${requestId}`
+      });
+    }
   });
 
   reviewTx();
@@ -752,7 +861,7 @@ app.post("/api/rollback/change-requests/:id", requireSuperAdmin, (req, res) => {
     const updateClassroom = db.prepare(`UPDATE classrooms SET updated_at = ${nowSql} WHERE id = ?`);
     for (const classroomId of changedClassroomIds) updateClassroom.run(classroomId);
 
-    logAudit(req.session.user.id, scope === "single" ? "rollback_change_request" : "rollback_to_before", "change_request", requestId, {
+    const auditId = logAudit(req.session.user.id, scope === "single" ? "rollback_change_request" : "rollback_to_before", "change_request", requestId, {
       scope,
       sourceRequestId: requestId,
       requestsIncluded: preview.requestsIncluded,
@@ -768,6 +877,23 @@ app.post("/api/rollback/change-requests/:id", requireSuperAdmin, (req, res) => {
         sourceRequestIds: change.sourceRequestIds
       }))
     });
+    for (const [classroomId, changes] of groupHistoryChangesByClassroom(preview.changes)) {
+      recordClassroomHistory({
+        classroomId,
+        eventType: scope === "single" ? "change_rolled_back" : "state_restored",
+        sourceType: "rollback",
+        sourceId: auditId,
+        actorId: req.session.user.id,
+        changes: changes.map((change) => ({
+          fieldKey: change.fieldKey,
+          label: change.label,
+          oldValue: change.currentValue,
+          newValue: change.restoreValue
+        })),
+        detail: { scope, sourceRequestId: requestId, sourceRequestIds: changes.flatMap((change) => change.sourceRequestIds || []) },
+        dedupeKey: `rollback_request:${auditId}:${classroomId}`
+      });
+    }
   });
 
   applyRollback();
@@ -791,7 +917,24 @@ app.post("/api/rollback/classroom-create-requests/:id", requireSuperAdmin, (req,
 
   const applyRollback = db.transaction(() => {
     const deleteClassroom = db.prepare("DELETE FROM classrooms WHERE id = ?");
-    for (const change of preview.changes) deleteClassroom.run(change.classroomId);
+    for (const change of preview.changes) {
+      recordClassroomHistory({
+        classroomId: change.classroomId,
+        eventType: "classroom_removed_by_rollback",
+        sourceType: "rollback",
+        sourceId: requestId,
+        actorId: req.session.user.id,
+        changes: [{
+          fieldKey: "__classroom__",
+          label: "教室记录",
+          oldValue: "存在",
+          newValue: "已删除"
+        }],
+        detail: { scope, sourceRequestIds: change.sourceRequestIds },
+        dedupeKey: `rollback_create:${scope}:${requestId}:${change.classroomId}`
+      });
+      deleteClassroom.run(change.classroomId);
+    }
 
     logAudit(req.session.user.id, scope === "single" ? "rollback_create_request" : "rollback_create_to_before", "classroom_create_request", requestId, {
       scope,
@@ -971,6 +1114,9 @@ app.post("/api/users/:id/password", requireSuperAdmin, (req, res) => {
   if (!user) return res.status(404).json({ error: "用户不存在" });
 
   db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(bcrypt.hashSync(password, 10), userId);
+  if (user.username === superAdminUsername && fs.existsSync(initialAdminPasswordPath)) {
+    fs.unlinkSync(initialAdminPasswordPath);
+  }
   sessionStore.destroyUserSessions(userId, userId === req.session.user.id ? req.sessionID : "");
   logAudit(req.session.user.id, "reset_user_password", "user", userId, { username: user.username });
   res.json({ ok: true });
@@ -1013,7 +1159,11 @@ app.get("/api/audit-logs", requireSuperAdmin, (req, res) => {
     LEFT JOIN users target_user ON al.target_type = 'user' AND target_user.id = al.target_id
     LEFT JOIN change_requests cr ON al.target_type = 'change_request' AND cr.id = al.target_id
     LEFT JOIN classroom_photo_requests pr ON al.target_type = 'classroom_photo_request' AND pr.id = al.target_id
-    LEFT JOIN classrooms c ON c.id = COALESCE(cr.classroom_id, pr.classroom_id)
+    LEFT JOIN classrooms c ON c.id = COALESCE(
+      cr.classroom_id,
+      pr.classroom_id,
+      CASE WHEN al.target_type = 'classroom' THEN al.target_id END
+    )
     LEFT JOIN classroom_values fd ON fd.classroom_id = c.id AND fd.field_key = 'front_door'
     LEFT JOIN classroom_values bd ON bd.classroom_id = c.id AND bd.field_key = 'back_door'
     WHERE (? = '' OR al.action = ?)
@@ -1126,7 +1276,7 @@ export function startServer(listenPort = port, host = "0.0.0.0") {
 
 if (process.env.NODE_ENV !== "test") startServer();
 
-export { app, pruneDatabaseBackups };
+export { app, normalizeAutoBackupKeep, pruneDatabaseBackups };
 
 function requireLogin(req, res, next) {
   if (!req.session.user) return res.status(401).json({ error: "请先登录" });
@@ -1195,6 +1345,43 @@ function parseJsonObject(value) {
 function normalizeClientRequestId(value) {
   const text = String(value || "").trim();
   return /^[a-zA-Z0-9_-]{12,80}$/.test(text) ? text : "";
+}
+
+function normalizeAutoBackupKeep(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.max(7, Math.floor(parsed)) : 200;
+}
+
+function classroomCreateHistoryChanges(building, room, values = {}) {
+  return [
+    { fieldKey: "building", oldValue: "", newValue: building },
+    { fieldKey: "room", oldValue: "", newValue: room },
+    ...Object.entries(values).map(([fieldKey, value]) => ({
+      fieldKey,
+      oldValue: "",
+      newValue: value
+    }))
+  ];
+}
+
+function photoHistoryChange(action, file) {
+  return {
+    fieldKey: "__photo__",
+    label: action === "upload" ? "上传照片" : "删除照片",
+    oldValue: action === "upload" ? "" : String(file || "照片"),
+    newValue: action === "upload" ? String(file || "照片") : "已删除"
+  };
+}
+
+function groupHistoryChangesByClassroom(changes) {
+  const grouped = new Map();
+  for (const change of changes || []) {
+    const classroomId = Number(change.classroomId);
+    if (!classroomId) continue;
+    if (!grouped.has(classroomId)) grouped.set(classroomId, []);
+    grouped.get(classroomId).push(change);
+  }
+  return grouped;
 }
 
 function isAllowedPhotoFile(file) {

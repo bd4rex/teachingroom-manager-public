@@ -14,8 +14,8 @@ process.env.UPLOADS_DIR = path.join(tempDir, "uploads");
 process.env.BACKUPS_DIR = path.join(tempDir, "backups");
 process.env.INITIAL_ADMIN_PASSWORD = "test-admin-password";
 
-const { app, pruneDatabaseBackups } = await import("../src/server.js");
-const { db, getFields, logAudit, setClassroomValue } = await import("../src/database.js");
+const { app, normalizeAutoBackupKeep, pruneDatabaseBackups } = await import("../src/server.js");
+const { db, getFields, initDb, logAudit, setClassroomValue } = await import("../src/database.js");
 const { buildExportWorkbook, parseUploadedWorkbook } = await import("../src/excel.js");
 
 const server = await new Promise((resolve) => {
@@ -61,6 +61,11 @@ test.after(async () => {
 });
 
 test("backup pruning uses only the automatic backup count limit", () => {
+  assert.equal(normalizeAutoBackupKeep(undefined), 200);
+  assert.equal(normalizeAutoBackupKeep("not-a-number"), 200);
+  assert.equal(normalizeAutoBackupKeep("1"), 7);
+  assert.equal(normalizeAutoBackupKeep("250"), 250);
+
   const backupsDir = process.env.BACKUPS_DIR;
   for (let index = 0; index < 202; index += 1) {
     const timestamp = String(index).padStart(6, "0");
@@ -84,6 +89,9 @@ test("backup pruning uses only the automatic backup count limit", () => {
 test("critical review, session, rollback, API and Excel workflows", async () => {
   const superAdmin = new ApiClient();
   await superAdmin.login("admin", "test-admin-password");
+  const firstSessionCookie = superAdmin.cookie;
+  await superAdmin.login("admin", "test-admin-password");
+  assert.notEqual(superAdmin.cookie, firstSessionCookie);
 
   const backupPolicy = await superAdmin.json("/api/backups");
   assert.equal(backupPolicy.response.status, 200);
@@ -134,6 +142,15 @@ test("critical review, session, rollback, API and Excel workflows", async () => 
   const classrooms = await adminOne.json("/api/classrooms");
   const classroom = classrooms.data.records.find((record) => record.values.room === "T101");
   assert.ok(classroom);
+  const anonymousHistory = await new ApiClient().json(`/api/classrooms/${classroom.id}/history`);
+  assert.equal(anonymousHistory.response.status, 401);
+  const createHistory = await adminOne.json(`/api/classrooms/${classroom.id}/history`);
+  assert.equal(createHistory.response.status, 200);
+  const createdEntry = createHistory.data.entries.find((entry) => entry.eventType === "classroom_created");
+  assert.ok(createdEntry);
+  assert.equal(createdEntry.actorName, "审核员一");
+  assert.equal(createdEntry.reviewerName, "审核员二");
+  assert.ok(createdEntry.changes.some((item) => item.fieldKey === "room" && item.newValue === "T101"));
 
   const changePayload = {
     classroomId: classroom.id,
@@ -158,6 +175,26 @@ test("critical review, session, rollback, API and Excel workflows", async () => 
   assert.equal(ownChangeReview.response.status, 403);
   const approvedChange = await adminTwo.json(`/api/change-requests/${changeRequest.data.id}/review`, "POST", { decision: "approved" });
   assert.equal(approvedChange.response.status, 200, JSON.stringify(approvedChange.data));
+  const changedHistory = await adminOne.json(`/api/classrooms/${classroom.id}/history`);
+  const changedEntry = changedHistory.data.entries.find((entry) => entry.eventType === "fields_changed");
+  assert.ok(changedEntry);
+  assert.equal(changedEntry.actorName, "审核员一");
+  assert.equal(changedEntry.reviewerName, "审核员二");
+  assert.equal(changedEntry.sourceType, "web");
+  assert.deepEqual(
+    changedEntry.changes.find((item) => item.fieldKey === "class_name"),
+    {
+      fieldKey: "class_name",
+      label: "班级/用途",
+      oldValue: "测试教室",
+      newValue: "测试教室（更新）"
+    }
+  );
+
+  db.prepare("DELETE FROM classroom_history WHERE dedupe_key = ?").run(`change_request:${changeRequest.data.id}`);
+  initDb();
+  const backfilledHistory = await adminOne.json(`/api/classrooms/${classroom.id}/history`);
+  assert.equal(backfilledHistory.data.entries.filter((entry) => entry.eventType === "fields_changed").length, 1);
 
   const staleRequest = await adminOne.json("/api/change-requests", "POST", {
     classroomId: classroom.id,
@@ -191,6 +228,12 @@ test("critical review, session, rollback, API and Excel workflows", async () => 
   const photosAfterReview = await adminOne.json(`/api/classrooms/${classroom.id}/photos`);
   assert.equal(photosAfterReview.data.photos.length, 1);
   assert.equal(photosAfterReview.data.pendingRequests.length, 0);
+  const photoHistory = await adminOne.json(`/api/classrooms/${classroom.id}/history`);
+  const photoEntry = photoHistory.data.entries.find((entry) => entry.eventType === "photo_uploaded");
+  assert.ok(photoEntry);
+  assert.equal(photoEntry.actorName, "审核员一");
+  assert.equal(photoEntry.reviewerName, "审核员二");
+  assert.ok(photoEntry.changes.some((item) => item.fieldKey === "__photo__" && item.newValue === "room.jpg"));
 
   const approvedAudit = db.prepare(`
     SELECT id FROM audit_logs
@@ -202,6 +245,18 @@ test("critical review, session, rollback, API and Excel workflows", async () => 
   assert.equal(timelinePreview.data.canExecute, true);
   assert.ok(timelinePreview.data.changes.some((item) => item.type === "field"));
   assert.ok(timelinePreview.data.changes.some((item) => item.type === "photo"));
+
+  const rollbackChange = await superAdmin.json(`/api/rollback/change-requests/${changeRequest.data.id}`, "POST", { scope: "single" });
+  assert.equal(rollbackChange.response.status, 200, JSON.stringify(rollbackChange.data));
+  const rollbackHistory = await adminOne.json(`/api/classrooms/${classroom.id}/history`);
+  const rollbackEntry = rollbackHistory.data.entries.find((entry) => entry.eventType === "change_rolled_back");
+  assert.ok(rollbackEntry);
+  assert.equal(rollbackEntry.actorUsername, "admin");
+  assert.ok(rollbackEntry.changes.some((item) => (
+    item.fieldKey === "class_name"
+      && item.oldValue === "测试教室（更新）"
+      && item.newValue === "测试教室"
+  )));
 
   const fieldCreate = await superAdmin.json("/api/fields", "POST", {
     key: "custom_asset_code",
@@ -232,6 +287,35 @@ test("critical review, session, rollback, API and Excel workflows", async () => 
   assert.equal(parsedRows.length, 1);
   assert.equal(parsedRows[0].values.custom_asset_code, "ASSET-001");
   assert.equal(parsedRows[0].values.inspection_note, "标准化考场");
+
+  const excelForm = new FormData();
+  excelForm.append(
+    "file",
+    new Blob([fs.readFileSync(excelPath)], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
+    "history-round-trip.xlsx"
+  );
+  const excelUpload = await adminOne.request("/api/import-review", { method: "POST", body: excelForm });
+  assert.equal(excelUpload.response.status, 200, JSON.stringify(excelUpload.data));
+  assert.equal(excelUpload.data.requestsCreated, 1);
+  const pendingAfterExcel = await adminTwo.json("/api/change-requests?status=pending");
+  const excelRequest = pendingAfterExcel.data.requests.find((request) => (
+    request.requestType === "update"
+      && request.classroom_id === classroom.id
+      && request.reason === "Excel上传：history-round-trip.xlsx"
+  ));
+  assert.ok(excelRequest);
+  const approveExcel = await adminTwo.json(`/api/change-requests/${excelRequest.id}/review`, "POST", {
+    decision: "approved",
+    note: "Excel 历史测试"
+  });
+  assert.equal(approveExcel.response.status, 200, JSON.stringify(approveExcel.data));
+  const excelHistory = await adminOne.json(`/api/classrooms/${classroom.id}/history`);
+  const excelEntry = excelHistory.data.entries.find((entry) => (
+    entry.eventType === "fields_changed" && entry.sourceType === "excel"
+  ));
+  assert.ok(excelEntry);
+  assert.equal(excelEntry.reason, "Excel上传：history-round-trip.xlsx");
+  assert.equal(excelEntry.reviewerName, "审核员二");
 
   const token = fs.readFileSync(path.join(tempDir, "data", "base-data-api-token.txt"), "utf8").trim();
   const queryToken = await new ApiClient().json(`/api/open/classrooms?token=${encodeURIComponent(token)}`);
@@ -278,5 +362,12 @@ test("critical review, session, rollback, API and Excel workflows", async () => 
     newPassword: "test-admin-password-updated"
   });
   assert.equal(passwordChange.response.status, 200, JSON.stringify(passwordChange.data));
+  assert.equal(fs.existsSync(initialPasswordPath), false);
+
+  fs.writeFileSync(initialPasswordPath, "temporary bootstrap credential", { mode: 0o600 });
+  const resetOwnPassword = await superAdmin.json("/api/users/1/password", "POST", {
+    password: "test-admin-password-final"
+  });
+  assert.equal(resetOwnPassword.response.status, 200, JSON.stringify(resetOwnPassword.data));
   assert.equal(fs.existsSync(initialPasswordPath), false);
 });

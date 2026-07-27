@@ -117,10 +117,13 @@ classroom_create_requests
 classroom_photos
 classroom_photo_requests
 audit_logs
+classroom_history
 user_sessions
 ```
 
 教室字段以 key/value 形式保存，因此新增字段时不需要修改 `classrooms` 主表结构。
+
+`classroom_history` 是按教室组织的不可变生效历史。每条事件保存教室、发生时间、来源、提交人、审核人、变更说明、审核意见和字段级旧值/新值。系统升级时会从已审核申请和照片申请回填旧记录，并为现有教室生成一次启用快照；后续新增、审核、照片和回滚会在正式数据事务中同步写入。
 
 ## 角色
 
@@ -138,6 +141,7 @@ user_sessions
 4. 审核通过后写入 `classroom_values` 正式数据。
 5. 审核拒绝的变更保留历史记录。
 6. 操作记录保留完整流程。
+7. 审核通过后同时写入该教室的配置历史。
 
 除超级管理员外的正式数据变更均执行交叉审核。提交人不能审核自己的新增教室、字段变更、照片上传或照片删除；待审核请求通过 `clientRequestId` 保证幂等，审核通过前还会校验正式旧值是否已变化。
 

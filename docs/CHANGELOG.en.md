@@ -2,6 +2,20 @@
 
 [中文](./CHANGELOG.md)
 
+## 2026-07-27
+
+### Classroom Configuration History And Full Review
+
+- Added an immutable classroom-scoped history with effective timestamp, field old/new values, submitter, reviewer, source, reason, and review note.
+- Classroom creation, web or Excel approvals, photo upload/deletion, single undo, and point-in-time restore now all enter classroom history.
+- Upgrades backfill approved change and photo records and create one history-enablement snapshot per existing classroom; unique keys make the migration restart-safe and duplicate-free.
+- Added `History` actions to desktop rows and mobile cards, with a paginated timeline rendered in Beijing time.
+- Successful login now rotates the session ID; fresh deployments retain configured or protected randomly generated administrator credentials and do not introduce fixed default passwords.
+- Direct photo persistence, audit, and classroom history now share one SQLite transaction; global audit logs also resolve directly targeted classrooms.
+- Invalid `AUTO_BACKUP_KEEP` values now safely fall back to 200 so automatic backups are not mistakenly pruned; field normalization consistently trims surrounding whitespace.
+- Updated affected transitive dependencies, returning the production dependency audit to zero known vulnerabilities.
+- Added regression coverage for history, migration backfill, secure bootstrap, and rollback, plus desktop and 390px mobile browser acceptance.
+
 ## 2026-07-18
 
 ### Sanitized Public Edition
