@@ -15,6 +15,13 @@ This file records only public-repository release and handoff events. It excludes
 
 ## Entries
 
+### 2026-07-27 11:23:45 CST
+
+- Event: Fixed department-badge overlap and tightened equipment-column spacing in the sanitized public edition.
+- Branch: `codex/rebalance-classroom-columns`
+- Notes: Widened Department while moderately narrowing Class/Use and Existing Screen, with no school deployment details or runtime data.
+- Verification: Five-character department badges stay inside their cells; Writing Board starts about 6px earlier; the 1280px page has no new horizontal overflow; all 3 Node tests passed.
+
 ### 2026-07-27 10:56:45 CST
 
 - Event: Reordered classroom action buttons in the sanitized public edition.
