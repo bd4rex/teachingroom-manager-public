@@ -363,7 +363,7 @@ td:nth-child(13) {
 
 th:nth-child(13),
 td:nth-child(13) {
-  width: 72px;
+  width: 112px;
 }
 
 th:nth-child(7),
@@ -1010,12 +1010,35 @@ dialog footer {
 }
 
 .recordActions {
-  flex-wrap: nowrap;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.recordActions button {
+  min-width: 0;
+  padding-inline: 6px;
+  font-size: 13px;
 }
 
 .historyForm {
   display: grid;
   gap: 14px;
+}
+
+.historyForm > header > div,
+.historyItem > header > div {
+  min-width: 0;
+}
+
+.historyForm > header > button,
+.historySource {
+  flex: 0 0 auto;
+}
+
+#historyTitle,
+.historyItem > header strong {
+  overflow-wrap: anywhere;
 }
 
 .historyList {
@@ -1125,6 +1148,7 @@ dialog footer {
 
 .historyChange strong,
 .historyChange span {
+  min-width: 0;
   overflow-wrap: anywhere;
 }
 
