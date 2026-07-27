@@ -27,6 +27,7 @@ The app is designed for small internal teams. The expected user count is about t
 - Inspectors and administrators submit data changes as review requests.
 - Classroom creation, field changes, photo uploads, and photo deletions require cross-review for all users except the super administrator.
 - Administrators review old/new field differences before official data is updated.
+- Each classroom has a dedicated configuration history showing old/new values, submitter, reviewer, source, notes, photos, and rollback events in Beijing time.
 - Super administrator-only user management and operation log.
 - Single approved-change rollback and cross-type point-in-time rollback for fields, classrooms, and photos.
 - Excel export based on current filters.
@@ -50,14 +51,14 @@ Open:
 http://localhost:3000/
 ```
 
-Initial administrator account:
+First administrator account:
 
 ```text
 Super administrator username: admin
 Password: INITIAL_ADMIN_PASSWORD when set; otherwise data/initial-admin-password.txt
 ```
 
-The app has no fixed password and does not create an inspector automatically. Change the administrator password immediately after first login; a generated temporary-password file is deleted automatically after that change. Create inspectors and normal administrators from user management.
+The app has no fixed password and does not create an inspector automatically. Change the administrator password immediately after first login; the generated temporary-password file is then deleted. Create inspectors and normal administrators from User Management.
 
 ## Runtime Defaults
 

@@ -33,9 +33,9 @@ test("first startup generates protected one-time administrator credentials", () 
     const password = credentialText.match(/^password=(.+)$/m)?.[1] || "";
     assert.ok(password.length >= 20);
 
-    const db = new Database(dbPath, { readonly: true });
-    const users = db.prepare("SELECT username, role, password_hash FROM users ORDER BY id").all();
-    db.close();
+    const bootstrapDb = new Database(dbPath, { readonly: true });
+    const users = bootstrapDb.prepare("SELECT username, role, password_hash FROM users ORDER BY id").all();
+    bootstrapDb.close();
     assert.equal(users.length, 1);
     assert.equal(users[0].username, "admin");
     assert.equal(users[0].role, "admin");

@@ -80,14 +80,14 @@ On first startup, if the database is empty, the app imports data from:
 
 This workbook contains synthetic examples only. Replace or remove the fictional records before production deployment; do not treat it as a real classroom inventory.
 
-## 5. Initial Administrator Account
+## 5. First Administrator Account
 
 ```text
 Super administrator username: admin
 Password: INITIAL_ADMIN_PASSWORD when set; otherwise data/initial-admin-password.txt
 ```
 
-`INITIAL_ADMIN_PASSWORD` must contain at least 12 characters. The app has no fixed password and does not create an inspector automatically. Change the administrator password immediately after first login; the generated temporary-password file is then deleted automatically.
+`INITIAL_ADMIN_PASSWORD` must contain at least 12 characters. The app has no fixed password and does not create an inspector automatically. Change the administrator password immediately after first login; the generated temporary-password file is then deleted.
 
 Permission notes:
 
@@ -210,7 +210,7 @@ Notes:
 - Web service port, default `3000`.
 - SQLite database path.
 - Secret used to sign login sessions.
-- Optional first-run administrator password, at least 12 characters; generated randomly when omitted.
+- Optional first administrator password, at least 12 characters; otherwise generated randomly.
 - Optional fixed token for the read-only open API.
 - Comma-separated CORS allowlist; cross-origin access is disabled by default.
 - Maximum automatic backup count, default 200.
@@ -291,6 +291,8 @@ Supports:
 
 User deletion is soft deletion; historical records are retained.
 
+The `History` button on each classroom is visible to every signed-in user and shows effective field, photo, creation, and rollback events. Approved legacy requests are backfilled during upgrade; an enablement snapshot provides the baseline where older logs cannot reconstruct every earlier detail.
+
 ## 13. Audit Logs And Rollback
 
 Super administrators can view:
@@ -361,7 +363,7 @@ curl -H "X-API-Token: $TOKEN" http://<SERVER_IP>:3000/api/open/classrooms
 
 ## 16. Maintenance Recommendations
 
-1. Change the administrator password immediately after first login and confirm that `data/initial-admin-password.txt` has been deleted.
+1. Change the administrator password after first login and confirm that `data/initial-admin-password.txt` has been deleted.
 2. Regularly download database backups to local or external storage.
 3. Do not expose `base-data-api-token.txt`.
 4. After Excel upload, review pending changes before bulk approval.

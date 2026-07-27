@@ -42,13 +42,13 @@ Environment=PORT=3000
 Environment=DATA_DIR=<APP_DIR>/data
 Environment=DB_PATH=<APP_DIR>/data/teachingroom.sqlite
 Environment=SESSION_SECRET=<CHANGE_ME_LONG_RANDOM_SECRET>
+Environment=INITIAL_ADMIN_PASSWORD=<OPTIONAL_FIRST_RUN_PASSWORD_AT_LEAST_12_CHARACTERS>
 Environment=AUTO_BACKUP_KEEP=200
 ```
 
 Optional:
 
 ```text
-INITIAL_ADMIN_PASSWORD=<optional first-run administrator password; at least 12 characters>
 BASE_DATA_API_TOKEN=<fixed token for open API>
 BASE_DATA_CORS_ORIGIN=<comma-separated allowed origins; disabled by default>
 BACKUP_MIRROR_DIR=<optional second disk or mounted network directory>
@@ -206,6 +206,7 @@ curl -H "X-API-Token: <TOKEN>" http://<SERVER_IP>:3000/api/open/classrooms
 - `npm test` passes.
 - `/api/health` returns `{ "ok": true }`.
 - Login works with the expected administrator account.
+- Each classroom history dialog shows old/new values, people, and Beijing time.
 - Mobile layout is usable on a narrow viewport.
 - Excel export downloads successfully.
 - Database backup list shows at least one automatic backup.

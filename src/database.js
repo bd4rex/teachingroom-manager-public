@@ -160,6 +160,24 @@ export function initDb() {
       created_at TEXT NOT NULL DEFAULT (${nowSql})
     );
 
+    CREATE TABLE IF NOT EXISTS classroom_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      classroom_id INTEGER NOT NULL,
+      building TEXT NOT NULL DEFAULT '',
+      room TEXT NOT NULL DEFAULT '',
+      event_type TEXT NOT NULL,
+      source_type TEXT NOT NULL DEFAULT 'web',
+      source_id INTEGER,
+      actor_id INTEGER REFERENCES users(id),
+      reviewer_id INTEGER REFERENCES users(id),
+      changes_json TEXT NOT NULL DEFAULT '[]',
+      reason TEXT NOT NULL DEFAULT '',
+      review_note TEXT NOT NULL DEFAULT '',
+      detail_json TEXT NOT NULL DEFAULT '{}',
+      dedupe_key TEXT UNIQUE,
+      occurred_at TEXT NOT NULL DEFAULT (${nowSql})
+    );
+
     CREATE TABLE IF NOT EXISTS user_sessions (
       sid TEXT PRIMARY KEY,
       data TEXT NOT NULL,
@@ -180,12 +198,16 @@ export function initDb() {
 
     CREATE INDEX IF NOT EXISTS idx_classroom_create_requests_client_request_id
       ON classroom_create_requests(client_request_id);
+
+    CREATE INDEX IF NOT EXISTS idx_classroom_history_classroom_time
+      ON classroom_history(classroom_id, occurred_at DESC, id DESC);
   `);
 
   migrateSchema();
   seedFields();
   seedUsers();
   migrateDoorFields();
+  backfillClassroomHistory();
 }
 
 function migrateSchema() {
@@ -309,6 +331,93 @@ export function logAudit(actorId, action, targetType, targetId, detail = {}) {
   return Number(result.lastInsertRowid);
 }
 
+export function recordClassroomHistory({
+  classroomId,
+  building = "",
+  room = "",
+  eventType,
+  sourceType = "web",
+  sourceId = null,
+  actorId = null,
+  reviewerId = null,
+  changes = [],
+  reason = "",
+  reviewNote = "",
+  detail = {},
+  dedupeKey = null,
+  occurredAt = null
+}) {
+  const id = Number(classroomId);
+  if (!id || !eventType) return null;
+  const classroom = db.prepare("SELECT building, room FROM classrooms WHERE id = ?").get(id);
+  const labels = new Map(getFields().map((field) => [field.key, field.label]));
+  const normalizedChanges = changes.map((change) => ({
+    fieldKey: String(change.fieldKey || ""),
+    label: String(change.label || labels.get(change.fieldKey) || change.fieldKey || "变更内容"),
+    oldValue: String(change.oldValue ?? ""),
+    newValue: String(change.newValue ?? "")
+  })).filter((change) => change.fieldKey && change.oldValue !== change.newValue);
+
+  const result = db.prepare(`
+    INSERT INTO classroom_history (
+      classroom_id, building, room, event_type, source_type, source_id,
+      actor_id, reviewer_id, changes_json, reason, review_note, detail_json,
+      dedupe_key, occurred_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, ${nowSql}))
+    ON CONFLICT(dedupe_key) DO NOTHING
+  `).run(
+    id,
+    String(building || classroom?.building || ""),
+    String(room || classroom?.room || ""),
+    String(eventType),
+    String(sourceType || "web"),
+    sourceId ? Number(sourceId) : null,
+    actorId ? Number(actorId) : null,
+    reviewerId ? Number(reviewerId) : null,
+    JSON.stringify(normalizedChanges),
+    String(reason || ""),
+    String(reviewNote || ""),
+    JSON.stringify(detail && typeof detail === "object" ? detail : {}),
+    dedupeKey ? String(dedupeKey) : null,
+    occurredAt ? String(occurredAt) : null
+  );
+  return result.changes ? Number(result.lastInsertRowid) : null;
+}
+
+export function getClassroomHistory(classroomId, { page = 1, pageSize = 30 } = {}) {
+  const id = Number(classroomId);
+  const safePage = Math.max(1, Number(page) || 1);
+  const safePageSize = Math.min(100, Math.max(10, Number(pageSize) || 30));
+  const total = db.prepare("SELECT COUNT(*) AS count FROM classroom_history WHERE classroom_id = ?").get(id)?.count || 0;
+  const offset = (safePage - 1) * safePageSize;
+  const entries = db.prepare(`
+    SELECT ch.id, ch.classroom_id AS classroomId, ch.building, ch.room,
+           ch.event_type AS eventType, ch.source_type AS sourceType, ch.source_id AS sourceId,
+           ch.changes_json AS changesJson, ch.reason, ch.review_note AS reviewNote,
+           ch.detail_json AS detailJson, ch.occurred_at AS occurredAt,
+           actor.username AS actorUsername, actor.display_name AS actorName,
+           reviewer.username AS reviewerUsername, reviewer.display_name AS reviewerName
+    FROM classroom_history ch
+    LEFT JOIN users actor ON actor.id = ch.actor_id
+    LEFT JOIN users reviewer ON reviewer.id = ch.reviewer_id
+    WHERE ch.classroom_id = ?
+    ORDER BY ch.occurred_at DESC, ch.id DESC
+    LIMIT ? OFFSET ?
+  `).all(id, safePageSize, offset).map((entry) => ({
+    ...entry,
+    changes: parseJsonArray(entry.changesJson),
+    detail: parseJsonObject(entry.detailJson)
+  }));
+  return {
+    entries,
+    page: safePage,
+    pageSize: safePageSize,
+    total,
+    hasMore: offset + entries.length < total
+  };
+}
+
 export function setClassroomValue(classroomId, fieldKey, value) {
   db.prepare(`
     INSERT INTO classroom_values (classroom_id, field_key, value, updated_at)
@@ -322,7 +431,7 @@ export function setClassroomValue(classroomId, fieldKey, value) {
 export function normalizeClassroomValue(fieldKey, value) {
   const text = String(value ?? "").trim();
   if (fieldKey === "orientation") return text.replace(/侧$/, "");
-  if (fieldKey !== "current_board") return String(value ?? "");
+  if (fieldKey !== "current_board") return text;
   return {
     "白": "白板",
     "绿": "绿板",
@@ -333,4 +442,205 @@ export function normalizeClassroomValue(fieldKey, value) {
 
 export function classroomCount() {
   return db.prepare("SELECT COUNT(*) AS count FROM classrooms").get().count;
+}
+
+export function backfillClassroomHistory() {
+  const insertBackfill = db.transaction(() => {
+    const fields = new Map(getFields().map((field) => [field.key, field.label]));
+    const requestItems = db.prepare(`
+      SELECT field_key AS fieldKey, old_value AS oldValue, new_value AS newValue
+      FROM change_request_items
+      WHERE request_id = ?
+    `);
+
+    const approvedChanges = db.prepare(`
+      SELECT cr.id, cr.classroom_id AS classroomId, cr.submitter_id AS submitterId,
+             cr.reviewer_id AS reviewerId, cr.reason, cr.review_note AS reviewNote,
+             COALESCE(cr.reviewed_at, cr.created_at) AS occurredAt,
+             c.building, c.room
+      FROM change_requests cr
+      JOIN classrooms c ON c.id = cr.classroom_id
+      WHERE cr.status = 'approved'
+      ORDER BY cr.id
+    `).all();
+    for (const request of approvedChanges) {
+      recordClassroomHistory({
+        classroomId: request.classroomId,
+        building: request.building,
+        room: request.room,
+        eventType: "fields_changed",
+        sourceType: String(request.reason || "").startsWith("Excel上传：") ? "excel" : "web",
+        sourceId: request.id,
+        actorId: request.submitterId,
+        reviewerId: request.reviewerId,
+        changes: requestItems.all(request.id),
+        reason: request.reason,
+        reviewNote: request.reviewNote,
+        dedupeKey: `change_request:${request.id}`,
+        occurredAt: request.occurredAt
+      });
+    }
+
+    const approvedCreates = db.prepare(`
+      SELECT id, submitter_id AS submitterId, reviewer_id AS reviewerId, values_json AS valuesJson,
+             reason, review_note AS reviewNote, client_request_id AS clientRequestId,
+             COALESCE(reviewed_at, created_at) AS occurredAt
+      FROM classroom_create_requests
+      WHERE status = 'approved'
+      ORDER BY id
+    `).all();
+    for (const request of approvedCreates) {
+      const payload = parseJsonObject(request.valuesJson);
+      const values = parseJsonObject(payload.values);
+      const classroom = request.clientRequestId
+        ? db.prepare("SELECT id, building, room FROM classrooms WHERE client_request_id = ?").get(request.clientRequestId)
+        : db.prepare("SELECT id, building, room FROM classrooms WHERE building = ? AND room = ?").get(payload.building || "", payload.room || "");
+      if (!classroom) continue;
+      recordClassroomHistory({
+        classroomId: classroom.id,
+        eventType: "classroom_created",
+        sourceType: String(request.reason || "").startsWith("Excel上传：") ? "excel" : "web",
+        sourceId: request.id,
+        actorId: request.submitterId,
+        reviewerId: request.reviewerId,
+        changes: createClassroomChanges(classroom, values, fields),
+        reason: request.reason,
+        reviewNote: request.reviewNote,
+        dedupeKey: `create_request:${request.id}`,
+        occurredAt: request.occurredAt
+      });
+    }
+
+    const directCreates = db.prepare(`
+      SELECT al.id, al.actor_id AS actorId, al.target_id AS classroomId,
+             al.detail_json AS detailJson, al.created_at AS occurredAt,
+             c.building, c.room
+      FROM audit_logs al
+      JOIN classrooms c ON c.id = al.target_id
+      WHERE al.action = 'create_classroom' AND al.target_type = 'classroom'
+      ORDER BY al.id
+    `).all();
+    for (const audit of directCreates) {
+      const detail = parseJsonObject(audit.detailJson);
+      recordClassroomHistory({
+        classroomId: audit.classroomId,
+        eventType: "classroom_created",
+        sourceType: "web",
+        sourceId: audit.id,
+        actorId: audit.actorId,
+        changes: createClassroomChanges(audit, parseJsonObject(detail.values), fields),
+        dedupeKey: `audit_create:${audit.id}`,
+        occurredAt: audit.occurredAt
+      });
+    }
+
+    const approvedPhotos = db.prepare(`
+      SELECT pr.id, pr.classroom_id AS classroomId, pr.submitter_id AS submitterId,
+             pr.reviewer_id AS reviewerId, pr.action, pr.original_name AS originalName,
+             pr.review_note AS reviewNote, COALESCE(pr.reviewed_at, pr.created_at) AS occurredAt,
+             c.building, c.room
+      FROM classroom_photo_requests pr
+      JOIN classrooms c ON c.id = pr.classroom_id
+      WHERE pr.status = 'approved'
+      ORDER BY pr.id
+    `).all();
+    for (const request of approvedPhotos) {
+      recordClassroomHistory({
+        classroomId: request.classroomId,
+        eventType: request.action === "upload" ? "photo_uploaded" : "photo_deleted",
+        sourceType: "web",
+        sourceId: request.id,
+        actorId: request.submitterId,
+        reviewerId: request.reviewerId,
+        changes: [photoHistoryChange(request.action, request.originalName)],
+        reviewNote: request.reviewNote,
+        dedupeKey: `photo_request:${request.id}`,
+        occurredAt: request.occurredAt
+      });
+    }
+
+    const directPhotos = db.prepare(`
+      SELECT al.id, al.actor_id AS actorId, al.action, al.target_id AS classroomId,
+             al.detail_json AS detailJson, al.created_at AS occurredAt,
+             c.building, c.room
+      FROM audit_logs al
+      JOIN classrooms c ON c.id = al.target_id
+      WHERE al.target_type = 'classroom'
+        AND al.action IN ('upload_classroom_photo', 'delete_classroom_photo')
+      ORDER BY al.id
+    `).all();
+    for (const audit of directPhotos) {
+      const detail = parseJsonObject(audit.detailJson);
+      const action = audit.action === "upload_classroom_photo" ? "upload" : "delete";
+      recordClassroomHistory({
+        classroomId: audit.classroomId,
+        eventType: action === "upload" ? "photo_uploaded" : "photo_deleted",
+        sourceType: "web",
+        sourceId: audit.id,
+        actorId: audit.actorId,
+        changes: [photoHistoryChange(action, detail.file || `照片 #${detail.photoId || ""}`)],
+        dedupeKey: `audit_photo:${audit.id}`,
+        occurredAt: audit.occurredAt
+      });
+    }
+
+    const classrooms = db.prepare("SELECT id, building, room FROM classrooms ORDER BY id").all();
+    const values = db.prepare("SELECT field_key AS fieldKey, value FROM classroom_values WHERE classroom_id = ? ORDER BY field_key");
+    for (const classroom of classrooms) {
+      const snapshotChanges = createClassroomChanges(
+        classroom,
+        Object.fromEntries(values.all(classroom.id).map((item) => [item.fieldKey, item.value])),
+        fields
+      );
+      recordClassroomHistory({
+        classroomId: classroom.id,
+        eventType: "history_baseline",
+        sourceType: "system",
+        changes: snapshotChanges,
+        detail: { note: "教室历史功能启用时的当前数据快照" },
+        dedupeKey: `history_baseline:v1:${classroom.id}`
+      });
+    }
+  });
+  insertBackfill();
+}
+
+function createClassroomChanges(classroom, values, fields) {
+  return [
+    { fieldKey: "building", label: fields.get("building") || "楼栋", oldValue: "", newValue: classroom.building || "" },
+    { fieldKey: "room", label: fields.get("room") || "教室编号", oldValue: "", newValue: classroom.room || "" },
+    ...Object.entries(values || {}).map(([fieldKey, value]) => ({
+      fieldKey,
+      label: fields.get(fieldKey) || fieldKey,
+      oldValue: "",
+      newValue: value
+    }))
+  ];
+}
+
+function photoHistoryChange(action, file) {
+  return {
+    fieldKey: "__photo__",
+    label: action === "upload" ? "上传照片" : "删除照片",
+    oldValue: action === "upload" ? "" : String(file || "照片"),
+    newValue: action === "upload" ? String(file || "照片") : "已删除"
+  };
+}
+
+function parseJsonObject(value) {
+  try {
+    const parsed = typeof value === "string" ? JSON.parse(value || "{}") : value;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function parseJsonArray(value) {
+  try {
+    const parsed = typeof value === "string" ? JSON.parse(value || "[]") : value;
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
 }

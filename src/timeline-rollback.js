@@ -1,4 +1,4 @@
-import { db, getFields, logAudit, nowSql, setClassroomValue } from "./database.js";
+import { db, getFields, logAudit, nowSql, recordClassroomHistory, setClassroomValue } from "./database.js";
 
 const supportedMutationActions = new Set([
   "review_approved",
@@ -83,6 +83,34 @@ export function applyTimelineRollback(auditId, actorId, scope = "before") {
   }
 
   const apply = db.transaction(() => {
+    const changesByClassroom = new Map();
+    for (const change of preview.changes) {
+      if (!change.classroomId) continue;
+      if (!changesByClassroom.has(change.classroomId)) changesByClassroom.set(change.classroomId, []);
+      changesByClassroom.get(change.classroomId).push(change);
+    }
+    for (const [classroomId, changes] of changesByClassroom) {
+      recordClassroomHistory({
+        classroomId,
+        eventType: preview.scope === "single" ? "timeline_change_rolled_back" : "timeline_state_restored",
+        sourceType: "rollback",
+        sourceId: preview.targetAuditId,
+        actorId,
+        changes: changes.map((change) => ({
+          fieldKey: change.fieldKey || (change.type === "photo" ? "__photo__" : "__classroom__"),
+          label: change.label,
+          oldValue: change.currentValue,
+          newValue: change.restoreValue
+        })),
+        detail: {
+          scope: preview.scope,
+          targetAuditId: preview.targetAuditId,
+          eventsIncluded: preview.eventsIncluded
+        },
+        dedupeKey: `timeline_rollback:${preview.scope}:${preview.targetAuditId}:${classroomId}`
+      });
+    }
+
     const touchedClassrooms = new Set();
     for (const operation of preview.operations) {
       if (operation.type === "set_value") {

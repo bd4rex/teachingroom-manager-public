@@ -117,10 +117,13 @@ classroom_create_requests
 classroom_photos
 classroom_photo_requests
 audit_logs
+classroom_history
 user_sessions
 ```
 
 Classroom fields are stored as key/value rows so new fields can be added without changing the main `classrooms` table.
+
+`classroom_history` is the immutable, classroom-scoped ledger of effective changes. Each event stores the classroom, timestamp, source, submitter, reviewer, reason, review note, and field-level old/new values. Upgrades backfill approved change and photo requests and create one enablement snapshot for every existing classroom. Future creation, approval, photo, and rollback transactions write history atomically with official data.
 
 ## Roles
 
@@ -138,6 +141,7 @@ The app treats `role=admin` as data-review permission. Super administrator permi
 4. Approved changes are written to `classroom_values`.
 5. Rejected changes remain in history.
 6. Audit logs preserve the workflow.
+7. Approval also writes the classroom-scoped configuration history.
 
 All non-super-admin mutations use cross-review. A submitter cannot approve their own classroom creation, field change, photo upload, or photo deletion. Pending requests are idempotent through `clientRequestId`, and approval verifies that the official old value has not changed.
 

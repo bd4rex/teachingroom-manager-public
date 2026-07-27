@@ -15,6 +15,13 @@ This file records only public-repository release and handoff events. It excludes
 
 ## Entries
 
+### 2026-07-27 09:57:11 CST
+
+- Event: Added classroom configuration history to the sanitized public edition and completed a full-project review.
+- Branch: `codex/classroom-configuration-history`
+- Notes: Synced application code, bilingual documentation, and synthetic-data rules only; added classroom timelines, legacy approval backfill, session ID rotation, photo transaction consistency, backup-config protection, and dependency fixes.
+- Verification: All 3 Node tests passed; the production dependency audit found zero known vulnerabilities; desktop and 390px mobile acceptance passed; the public-repository privacy scan excludes private Git history and runtime data.
+
 ### 2026-07-18
 
 - Event: Created the sanitized public edition of TeachingRoom Manager.
