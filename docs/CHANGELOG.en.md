@@ -17,7 +17,7 @@
 
 - Added an immutable classroom-scoped history with effective timestamp, field old/new values, submitter, reviewer, source, reason, and review note.
 - Classroom creation, web or Excel approvals, photo upload/deletion, single undo, and point-in-time restore now all enter classroom history.
-- Upgrades backfill approved change and photo records and create one history-enablement snapshot per existing classroom; unique keys make the migration restart-safe and duplicate-free.
+- Upgrades backfill approved change and photo records and create one "Classroom Configuration When History Tracking Was Enabled" entry per existing classroom; unique keys make the migration restart-safe and duplicate-free.
 - Added `History` actions to desktop rows and mobile cards, with a paginated timeline rendered in Beijing time.
 - Successful login now rotates the session ID; fresh deployments retain configured or protected randomly generated administrator credentials and do not introduce fixed default passwords.
 - Direct photo persistence, audit, and classroom history now share one SQLite transaction; global audit logs also resolve directly targeted classrooms.
