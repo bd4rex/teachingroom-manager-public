@@ -9,6 +9,7 @@
 - Expanded the desktop action column and changed `History` plus `Edit` into a stable two-column action layout so neither button extends beyond the table.
 - Standardized desktop-row and mobile-card actions so `Edit` appears before `History`.
 - Rebalanced the Class/Use, Department, and Existing Screen columns so five-character department badges do not overlap screen content and the Writing Board column starts slightly earlier.
+- Standardized Teacher Audio, Recording, and Monitoring as equal-width centered columns so all Yes/No badges share the same spacing and center line.
 - Hardened long-text wrapping for the history dialog title, source badge, and old/new field values so real data cannot crowd the close button or overflow the content area.
 - Rechecked 1280px desktop and 390px mobile viewports with zero horizontal page overflow.
 
