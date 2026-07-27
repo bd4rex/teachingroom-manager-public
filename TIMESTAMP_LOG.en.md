@@ -15,6 +15,13 @@ This file records only public-repository release and handoff events. It excludes
 
 ## Entries
 
+### 2026-07-27 11:33:10 CST
+
+- Event: Standardized spacing across Teacher Audio, Recording, and Monitoring in the sanitized public edition.
+- Branch: `codex/align-boolean-columns`
+- Notes: All three columns now use equal widths, identical padding, and centered alignment, with no school deployment details or runtime data.
+- Verification: Each column measures about 75.3px, every badge measures 42px, and center offset is 0; the 1280px page has no horizontal overflow; all 3 Node tests passed.
+
 ### 2026-07-27 11:23:45 CST
 
 - Event: Fixed department-badge overlap and tightened equipment-column spacing in the sanitized public edition.
